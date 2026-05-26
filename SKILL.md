@@ -98,6 +98,7 @@ Generate `contracts/<module>.md` containing:
 - **Interface signatures** — export function signatures exactly as they'll appear in code
 - **Behavior descriptions** — what each function does, inputs, outputs, errors, edge cases
 - **Upstream dependency interfaces** — copy-pasted from upstream module contracts (not from memory)
+- **npm Dependencies** — list every npm package this module needs. Prefer pure-JS packages (no native addons). If native is unavoidable, prefer `sql.js` over `better-sqlite3`. Node.js built-ins (`fs`, `path`, `crypto`) do NOT count as dependencies.
 
 Show each contract to the user for review. Allow batch approval if user prefers.
 
@@ -141,6 +142,20 @@ Wave 3: frontend
 
 On confirmation: write waves to plan.json, `status` → `ready`.
 
+## Pre-flight: Dependency Installation
+
+**Trigger:** immediately after Phase 3 is confirmed, before Phase 4 starts.
+**No user interaction required — this step is automatic.**
+
+### Step 1 — Collect all dependencies
+Read every `contracts/<module>.md`, extract the `## npm 依赖` section from each. Merge into a single dependency list (deduplicate, take highest version).
+
+### Step 2 — Install once
+Run `npm install <merged-packages>` (or update `package.json` first, then `npm install`). This installs ALL module dependencies in ONE shot. Subagents will NOT run npm install themselves.
+
+### Step 3 — Verify
+`npm ls` to confirm all packages are installed. If any native addon fails to compile → switch to pure-JS alternative and update the relevant contract.
+
 ## Phase 4: Subagent Execution (CORE)
 
 **Trigger:** user says "OK" after Phase 3, or `/execute [module]` or `/execute-all`
@@ -149,51 +164,52 @@ On confirmation: write waves to plan.json, `status` → `ready`.
 ```
 For each wave in order:
   For each module in wave:
-    1. Check upstream deps are completed
-    2. Generate subagent skill: .reasonix/modules/skills/modularize-<module>.md
-       with frontmatter: runAs: subagent
-    3. Invoke: /skill modularize-<module>
-    4. Subagent runs with:
-       SYSTEM   = prefix.md (byte-stable → cache hits)
-       USER     = contracts/<module>.md + upstream result.md(s) + "Implement <module>"
-    5. Verify output: outputs/<module>/result.md exists
-    6. Update plan.json status
+    1. Check upstream deps are completed (outputs/<dep>/result.md exists)
+    2. Generate subagent skill: .reasonix/modules/skills/modularize-<module>.md (see template below)
+    3. Invoke run_skill modularize-<module>
+    4. Subagent contract goes into SYSTEM prompt → first subagent caches it, rest hit cache
+    5. Verify output: outputs/<module>/result.md exists + contract compliance
+    6. Update plan.json module status
     7. Report progress
 ```
 
+**CRITICAL**: Subagents must NOT run `npm install`. Dependencies already installed in Pre-flight. If a subagent needs a missing package, abort and report it — the contract must be updated.
+
 ### /execute <module> — Single module
-Check upstream deps first. Same subagent flow. Used for manual control or after /revise.
+Same flow. Check upstream deps first.
 
 ### /revise <module> — Recovery
 1. Identify failed module
-2. Check if contract needs fixing → if so, review downstream contracts too
-3. Regenerate subagent skill, re-execute
-4. Then /execute-all to pick up downstream
+2. Check if contract or deps need fixing
+3. If new deps needed → run Pre-flight again
+4. Regenerate subagent skill, re-execute
+5. Then /execute-all to pick up downstream
 
 ### Subagent skill template
 When generating `.reasonix/modules/skills/modularize-<module>.md`:
 ```markdown
 ---
-description: "Implement the <module> module for task <task_id>"
+description: "Implement the <module> module for <task_id>. Only write code, do not run npm install."
 runAs: subagent
 ---
-# Task: Implement <module>
 
-## Project Context (from prefix.md)
-<copy prefix.md content verbatim>
+# Implement <module>
 
-## Your Contract (from contracts/<module>.md)
-<copy contract content verbatim>
+## Contract (MUST follow exactly)
+```typescript
+<copy ONLY the interface signatures + type definitions from contracts/<module>.md>
+```
 
-## Upstream Module Outputs
-<for each upstream dep: copy its result.md interface section>
+## Upstream Outputs
+<for each upstream dep: copy its result.md "Interface Summary" section verbatim>
 
-## Requirements
-1. Strictly follow the contract signatures
-2. Only call upstream interfaces declared in their contracts
-3. After completion write outputs/<module>/result.md using templates/result.template.md
-4. Use /remember to write key decisions to project memory
-5. Run tests before completing
+## Hard Rules
+1. Write ONLY the files listed in the contract
+2. Use ONLY the upstream interfaces declared above — no private imports
+3. NEVER run `npm install` — all deps already installed
+4. NEVER run `npm test` — typecheck only: `npx tsc --noEmit`
+5. After implementation: write outputs/<module>/result.md per templates/result.template.md
+6. Write key decisions to project memory via /remember
 ```
 
 ### Progress reporting format

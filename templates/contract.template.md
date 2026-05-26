@@ -64,6 +64,23 @@
 - **`{{name}}`**：{{description}}
 {{/each}}
 
+## npm 依赖
+
+> 此模块需要的 npm 包。Phase 3 后主 agent 统一安装，子 agent 禁止自行 npm install。
+
+```json
+{
+  "dependencies": {
+    "{{package_name}}": "^{{version}}"
+  }
+}
+```
+
+**安装要求**：
+- 优先纯 JS 包（无 native addon）→ 避免 node-gyp 编译
+- 如果必须用 native 包，使用 `sql.js` 代替 `better-sqlite3`
+- Node.js 内置模块（`fs`, `path`, `crypto` 等）不写进来
+
 ## 文件输出
 
 本模块完成后应在以下位置产生产物：
