@@ -1,5 +1,15 @@
 ---
-description: "Cache-aware task decomposition — split large tasks into independent modules, each executed as an isolated subagent, sharing a byte-stable SYSTEM prefix for cross-session DeepSeek cache hits."
+name: modularize
+description: "Cache-aware task decomposition — split large coding tasks into independent modules, define interface contracts, schedule execution waves via topological sort, execute each module as an isolated Reasonix subagent, and verify integration. Invoke when the user wants to break down a complex task or project."
+argument-hint: "<task description> | /decompose | /contracts | /schedule | /execute | /integrate | /status | /revise"
+allowed-tools:
+  - Read
+  - Write
+  - Bash
+  - Glob
+  - Grep
+  - Edit
+  - WebFetch
 ---
 # Modularize — Cache-Aware Task Decomposition for Reasonix
 
@@ -79,7 +89,7 @@ Modularize 利用 Reasonix 的三个原生能力：
 ## 文件结构
 
 ```
-.reasonix/skills/modularize/      ← 本 Skill（手动安装）
+~/.claude/skills/modularize/      ← 本 Skill（Claude 格式，Reasonix 原生读取）
 ├── SKILL.md                       ← 本文件（入口 + 路由）
 ├── phases/                        ← 按需加载的阶段指令
 │   ├── 01-analyze.md
