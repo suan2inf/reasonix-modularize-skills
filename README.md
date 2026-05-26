@@ -54,11 +54,11 @@ reasonix code /path/to/project
 
 ### 中型：Task Manager REST API
 
-| 项目 | 模块数 | 依赖层 | 总上下文 | 缓存命中 | `tsc` | 运行时 |
-|------|--------|--------|----------|----------|-------|--------|
-| 任务管理 REST 服务 | 9 | — | — | — | — | — |
+| 项目 | 模块数 | 依赖层 | 总 token | 缓存命中 | `tsc` | 子 agent |
+|------|--------|--------|----------|----------|-------|----------|
+| 任务管理 REST 服务 | 6 | 4 波 | 4.4M | **97.1%** | ✅ | 6/6 |
 
-模块链路：`models → database → auth / tasks / validation → router → server`
+模块链路：`database / validation → auth → tasks / tags → api` · 23 个源文件
 
 ### 大型：待测
 
