@@ -1,3 +1,6 @@
+---
+description: "Cache-aware task decomposition — split large tasks into independent modules, each executed as an isolated subagent, sharing a byte-stable SYSTEM prefix for cross-session DeepSeek cache hits."
+---
 # Modularize — Cache-Aware Task Decomposition for Reasonix
 
 > 大任务 → 拆成独立模块 → 每个模块作为 subagent skill 执行 → 共享 SYSTEM 前缀让 DeepSeek 缓存跨模块命中。
