@@ -8,6 +8,19 @@ Modularize 是一个 [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) S
 
 **一句话**：把"一个超长会话跑到底"变成"N 个小会话各干各的，但缓存一份也不会浪费"。
 
+## 实测效果
+
+> **测试项目**：CLI 命令行笔记工具，5 个模块（models → storage → commands → cli → main），6 个子 agent 会话
+>
+> | 指标 | 数据 |
+> |------|------|
+> | 总输入 token | ~40,000 |
+> | 缓存命中率 | **98%** |
+> | 编译 | `tsc --noEmit` 零错误 |
+> | 运行时 | add / list / search 全通 |
+
+5 个模块跑完仅 40K token 上下文，缓存命中 98%。如果是单体超长会话跑同一任务，上下文轻松破 150K，缓存命中率随会话线性下降。
+
 ## 解决什么问题？
 
 ### Reasonix 的困境
