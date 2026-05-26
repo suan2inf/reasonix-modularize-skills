@@ -42,25 +42,54 @@ reasonix code /path/to/project
 
 ## Vibe Coding 实验
 
-以下是在三个规模的项目上纯自然语言驱动的测试结果。**每次只输入一行任务描述，确认每一阶段输出，不手动修改代码**。
+以下是在两个规模的项目上纯自然语言驱动的测试结果。**每次只输入一行任务描述，确认每一阶段输出，不手动修改代码**。
 
 ### 小型：CLI 笔记工具
 
-| 项目 | 模块数 | 依赖层 | 总上下文 | 缓存命中 | `tsc` | 运行时 |
-|------|--------|--------|----------|----------|-------|--------|
-| 命令行笔记（JSON 存储） | 5 | 4 层 | ~40K | 98% | ✅ | ✅ |
-
-模块链路：`models → storage → commands → cli → main`
+| 指标 | 数据 |
+|------|------|
+| 模块数 | 5（models / storage / commands / cli / main） |
+| 源文件 | 5 个 `.ts` 文件 |
+| 代码量 | 496 行 |
+| 总 prompt token | ~40,000 |
+| 缓存命中率 | 98% |
+| `tsc --noEmit` | ✅ 通过 |
+| 运行时 | add / list / search 正常 |
 
 ### 中型：Task Manager REST API
 
-| 项目 | 模块数 | 依赖层 | 总 token | 缓存命中 | `tsc` | 子 agent |
-|------|--------|--------|----------|----------|-------|----------|
-| 任务管理 REST 服务 | 6 | 4 波 | 4.4M | **97.1%** | ✅ | 6/6 |
+| 指标 | 数据 |
+|------|------|
+| 模块数 | 6（database / validation / auth / tasks / tags / api） |
+| 源文件 | 23 个 `.ts` 文件 |
+| 代码量 | 1,319 行 |
+| 总 prompt token | 4,389,645 |
+| 缓存命中率 | 97.1% |
+| `tsc --noEmit` | ✅ 通过 |
+| 依赖安装 | 11 个 npm 包（均纯 JS，无 native addon） |
 
-模块链路：`database / validation → auth → tasks / tags → api` · 23 个源文件
+## 已知问题
 
-### 大型：待测
+### 子 agent 原生模块编译卡死
+
+**表现**：子 agent 内执行 `npm install better-sqlite3` 时，node-gyp 编译原生模块挂起无响应，导致该模块执行中断。
+
+**根因**：Reasonix 子 agent 运行环境对原生 C++ 模块编译的支持不稳定。`better-sqlite3` 等需要 node-gyp 的包可能在子 agent 中不正常工作。
+
+**现状缓解**：
+- Phase 2 契约要求优先纯 JS 包，避免 native addon
+- 中型测试中由 `better-sqlite3` 切换为 `sql.js`（纯 JS SQLite 实现）未出现问题
+- Pre-flight 阶段主 agent 统一执行一次 `npm install`，子 agent 不再独立安装依赖
+
+**未根治**：根本解决需要 Reasonix 子 agent 运行时本身对原生模块编译提供可靠支持。
+
+### 子 agent 工具调用开销
+
+**表现**：子 agent 完成一个模块平均 20-25 轮工具调用，每轮一次 API 往返。相同工作放在主 agent 直接完成只需数轮。
+
+**根因**：子 agent 每轮需重新探索上下文、读取契约和上游产出，主 agent 已持有全部上下文。
+
+**现状缓解**：契约放在 SYSTEM prompt（而非 USER）中，后续子 agent 可命中前缀缓存。但工具调用次数未实质减少。
 
 ---
 
