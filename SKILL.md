@@ -1,7 +1,7 @@
 ---
 name: modularize
-description: "Cache-aware task decomposition — split large coding tasks into independent modules, define interface contracts, schedule execution waves via topological sort, execute each module as an isolated Reasonix subagent, and verify integration. Invoke when the user wants to break down a complex task or project."
-argument-hint: "<task description> | /decompose | /contracts | /schedule | /execute | /integrate | /status | /revise"
+description: "Cache-aware task decomposition — split large coding tasks into independent modules, define interface contracts, schedule execution waves, and execute each module as an isolated Reasonix subagent. Invoke when user needs to break down a complex task, build a multi-module system, or wants structured contract-driven development."
+argument-hint: "<task description or command>"
 allowed-tools:
   - Read
   - Write
@@ -11,122 +11,242 @@ allowed-tools:
   - Edit
   - WebFetch
 ---
-# Modularize — Cache-Aware Task Decomposition for Reasonix
 
-> 大任务 → 拆成独立模块 → 每个模块作为 subagent skill 执行 → 共享 SYSTEM 前缀让 DeepSeek 缓存跨模块命中。
 
-## 为什么需要
+<objective>
+Split large coding tasks into independent modules executed as Reasonix subagents. All modules share a byte-stable SYSTEM prefix (prefix.md) so DeepSeek's prefix cache hits across subagent sessions.
 
-Reasonix 的 Append-Only 会话配合 DeepSeek 前缀缓存虽然省 token，但超长会话的代价是：
-- 上下文膨胀 → 生成速度线性退化
-- 注意力稀释 → 模型遗忘早期信息
-- 修正历史 → 缓存立即失效，费用暴增
+Five phases: analyze → contracts → schedule → execute → integrate.
+On failure: only re-run the broken module + its downstream dependents.
+</objective>
 
-**Modularize 的解法**：任务开始前就拆成独立模块，每个模块作为 Reasonix subagent 执行。
-subagent 有独立上下文、不污染主会话。最关键的是：**所有模块的 SYSTEM prompt 完全一致**（基于 prefix.md），DeepSeek 的前缀缓存跨 subagent 持续命中。
+<context>
+Workflow files in `phases/`, templates in `templates/`, references in `reference/` — available if more detail is needed, but the core instructions are here.
+</context>
 
-## 缓存机制（核心）
+<process>
 
+## Phase 1: Task Analysis → Module Decomposition
+
+**Trigger:** natural language task description or `/decompose`
+
+### Step 1 — Scout existing context
+- Read `.reasonix/modules/prefix.md` and `.reasonix/modules/plan.json` if they exist (resume or recursive split)
+- Run `ls -R src/` to see existing code
+
+### Step 2 — Propose module decomposition
+Analyze the user's task and identify functional module boundaries.
+
+**Principles:**
+- Each module = one cohesive feature unit (e.g. "user auth", not "auth.ts file")
+- Minimal inter-module dependencies
+- Shared infrastructure (db, logging) splits first
+- Mark oversized modules as recursive-splittable
+
+**Output format:**
 ```
-┌─────────────────────────────────────────────┐
-│ SYSTEM prompt（所有模块完全一致 → 缓存命中）  │
-│ ┌─────────────────────────────────────────┐ │
-│ │ prefix.md  ← 项目概述 + 规范，字节不变    │ │
-│ └─────────────────────────────────────────┘ │
-├─────────────────────────────────────────────┤
-│ USER prompt（每模块不同，不破坏 SYSTEM 缓存） │
-│ ┌─────────────────────────────────────────┐ │
-│ │ contracts/{self}.md  ← 本模块接口契约    │ │
-│ │ outputs/{dep}/result.md ← 上游产出摘要   │ │
-│ │ "实现 auth 模块"                         │ │
-│ └─────────────────────────────────────────┘ │
-└─────────────────────────────────────────────┘
+我分析了你的任务，建议拆成以下模块：
 
-prefix.md 字节不变 → DeepSeek 只需计算新增 USER 内容的 KV → 缓存命中
-```
+┌── database ──┐
+│              ├──► auth ──┐
+└──────────────┘           ├──► api ──► frontend
+                           │
+┌── storage ───────────────┘
+└──────────────┘
 
-关键区分：**契约不在 prefix.md 里**——prefix.md 只含项目概述和规范（通常 < 100 行），确保精简且字节稳定。契约放在 USER message 中，不影响缓存命中。
+| 模块 | 职责 | 依赖 | 复杂度 |
+|------|------|------|--------|
+| database | 数据库连接、查询封装 | 无 | medium |
+| storage | 文件存储 | 无 | low |
+| auth | 注册、登录、鉴权 | database | medium |
+| api | REST 接口层 | auth, storage | high |
+| frontend | 前端页面 | api | high |
 
-## 命令参考
-
-| 命令 | 阶段 | 说明 |
-|------|------|------|
-| `/decompose <任务描述>` | Phase 1 | 分析任务 → 拆成模块依赖图 → 用户确认 |
-| `/contracts` | Phase 2 | 为每个模块生成接口契约（TS 签名 + 行为描述） |
-| `/schedule` | Phase 3 | 计算执行波次（拓扑排序） |
-| `/execute <模块>` | Phase 4 | 以 subagent 模式执行指定模块 |
-| `/execute-all` | Phase 4 | 按波次依次执行全部模块 |
-| `/integrate` | Phase 5 | 验证所有模块产出是否符合契约 |
-| `/status` | 任意 | 查看进度和状态 |
-| `/revise <模块>` | 异常恢复 | 重新执行失败模块及其下游（不波及无关模块） |
-
-## 与 Reasonix 原生系统的关系
-
-Modularize 利用 Reasonix 的三个原生能力：
-
-| Reasonix 能力 | Modularize 如何使用 |
-|---------------|---------------------|
-| **Skill 系统 + subagent** | 每个模块封装为 `runAs: subagent` 的 skill，独立上下文执行 |
-| **Memory（`remember`/`recall_memory`）** | 模块执行时把关键决策写入 project memory → 下游模块自动继承 |
-| **缓存优先循环（Pillar 1）** | prefix.md 作为字节稳定的 SYSTEM prompt，实现跨 subagent 缓存命中 |
-
-## 路由表
-
-执行前判断当前阶段，只加载对应 phase 指令文件：
-
-```
-状态               → 加载文件
-─────────────────────────────────────
-/decompose        → phases/01-analyze.md
-/contracts        → phases/02-contracts.md
-/schedule         → phases/03-schedule.md
-/execute*         → phases/04-execute.md
-/integrate        → phases/05-integrate.md
-/revise           → phases/04-execute.md + 05-integrate.md
-/decompose <子>    → phases/01-analyze.md（递归拆分）
+确认？
 ```
 
-## 文件结构
-
-```
-~/.claude/skills/modularize/      ← 本 Skill（Claude 格式，Reasonix 原生读取）
-├── SKILL.md                       ← 本文件（入口 + 路由）
-├── phases/                        ← 按需加载的阶段指令
-│   ├── 01-analyze.md
-│   ├── 02-contracts.md
-│   ├── 03-schedule.md
-│   ├── 04-execute.md              ← 核心：subagent 编排
-│   └── 05-integrate.md
-├── templates/                     ← 产出模板
-│   ├── contract.template.md        ← 模块契约模板
-│   ├── prefix.template.md          ← 共享前缀模板
-│   └── result.template.md          ← 模块产出摘要模板
-├── reference/                     ← 参考文档
-│   ├── dependency-graph.md         ← DAG 算法说明
-│   └── contract-format.md          ← 契约 DSL 规范
-└── examples/
-    └── blog-system.md
-
-.reasonix/modules/                 ← 任务运行时产出
-├── prefix.md                       ← 共享前缀（字节稳定）⚡
-├── plan.json                       ← 依赖图 + 波次 + 状态机
-├── contracts/                      ← 各模块接口契约（放入 user message）
-│   ├── database.md
-│   └── auth.md
-├── outputs/                        ← 各模块执行结果
-│   ├── database/
-│   │   └── result.md
-│   └── auth/
-│       └── result.md
-└── skills/                         ← 自动生成的模块 subagent skill（安装到这里）
-    ├── modularize-database.md
-    └── modularize-auth.md
+### Step 3 — Write plan.json on confirmation
+Path: `.reasonix/modules/plan.json`
+```json
+{
+  "task_id": "<kebab-case>",
+  "task_description": "<original task>",
+  "modules": [
+    { "name": "database", "depends_on": [], "complexity": "medium" },
+    { "name": "auth", "depends_on": ["database"], "complexity": "medium" }
+  ],
+  "waves": [],
+  "status": "analyzed",
+  "created_at": "<ISO timestamp>"
+}
 ```
 
-## 核心原则
+If the user's description is too vague — ask clarifying questions. Do not guess.
 
-1. **prefix.md 字节稳定** — 不含时间戳、会话 ID、动态路径、模块专属内容
-2. **契约在 USER 不在 SYSTEM** — contract.md 放入 user message，不打破 SYSTEM 缓存
-3. **优先用 Reasonix 原生机制** — subagent 执行模块、Memory 传递知识
-4. **失败只修故障模块** — 集成失败时仅重跑问题模块及其下游
-5. **按需加载** — 执行 Phase 4 时不加载其他 phase 指令，保持上下文精简
+## Phase 2: Interface Contracts + Shared Prefix
+
+**Trigger:** user says "OK" after Phase 1, or `/contracts`
+
+### Step 1 — Load templates
+Read `templates/contract.template.md` and `templates/prefix.template.md` for the exact format.
+
+### Step 2 — Generate contracts per module
+For each module (topological order — root dependencies first):
+
+Generate `contracts/<module>.md` containing:
+- **Type definitions** in ```typescript blocks — machine-parseable
+- **Interface signatures** — export function signatures exactly as they'll appear in code
+- **Behavior descriptions** — what each function does, inputs, outputs, errors, edge cases
+- **Upstream dependency interfaces** — copy-pasted from upstream module contracts (not from memory)
+
+Show each contract to the user for review. Allow batch approval if user prefers.
+
+### Step 3 — Generate prefix.md
+After all contracts are approved, generate `prefix.md`:
+
+**CRITICAL: prefix.md contains ONLY project overview + conventions. No module-specific content.**
+- Project description, tech stack, directory structure
+- Coding conventions (indentation, naming, imports, error handling)
+- Module list (just names + status, no contract details)
+- **NO timestamps, NO session IDs, NO dynamic content**
+
+Why: prefix.md is the byte-stable SYSTEM prompt shared across all subagent sessions. It must be identical everywhere. Module contracts go in USER messages.
+
+### Step 4 — Update plan.json
+`status` → `contracted`
+
+## Phase 3: Dependency Graph → Wave Scheduling
+
+**Trigger:** user says "OK" after Phase 2, or `/schedule`
+
+### Kahn algorithm:
+1. Compute in-degree for each module (how many dependencies)
+2. Modules with in-degree == 0 → Wave 0
+3. Remove Wave 0 modules, decrement in-degrees of dependents
+4. New in-degree == 0 → Wave 1
+5. Repeat until all assigned
+6. If modules remain → cycle detected → report error
+
+**Output:**
+```
+执行计划（共 4 波）：
+
+Wave 0 (可并行): database, storage
+Wave 1: auth
+Wave 2: api
+Wave 3: frontend
+
+确认？
+```
+
+On confirmation: write waves to plan.json, `status` → `ready`.
+
+## Phase 4: Subagent Execution (CORE)
+
+**Trigger:** user says "OK" after Phase 3, or `/execute [module]` or `/execute-all`
+
+### /execute-all — Auto wave execution
+```
+For each wave in order:
+  For each module in wave:
+    1. Check upstream deps are completed
+    2. Generate subagent skill: .reasonix/modules/skills/modularize-<module>.md
+       with frontmatter: runAs: subagent
+    3. Invoke: /skill modularize-<module>
+    4. Subagent runs with:
+       SYSTEM   = prefix.md (byte-stable → cache hits)
+       USER     = contracts/<module>.md + upstream result.md(s) + "Implement <module>"
+    5. Verify output: outputs/<module>/result.md exists
+    6. Update plan.json status
+    7. Report progress
+```
+
+### /execute <module> — Single module
+Check upstream deps first. Same subagent flow. Used for manual control or after /revise.
+
+### /revise <module> — Recovery
+1. Identify failed module
+2. Check if contract needs fixing → if so, review downstream contracts too
+3. Regenerate subagent skill, re-execute
+4. Then /execute-all to pick up downstream
+
+### Subagent skill template
+When generating `.reasonix/modules/skills/modularize-<module>.md`:
+```markdown
+---
+description: "Implement the <module> module for task <task_id>"
+runAs: subagent
+---
+# Task: Implement <module>
+
+## Project Context (from prefix.md)
+<copy prefix.md content verbatim>
+
+## Your Contract (from contracts/<module>.md)
+<copy contract content verbatim>
+
+## Upstream Module Outputs
+<for each upstream dep: copy its result.md interface section>
+
+## Requirements
+1. Strictly follow the contract signatures
+2. Only call upstream interfaces declared in their contracts
+3. After completion write outputs/<module>/result.md using templates/result.template.md
+4. Use /remember to write key decisions to project memory
+5. Run tests before completing
+```
+
+### Progress reporting format
+```
+✅ auth 完成 — 接口全部符合契约
+进度: Wave 1/3 — 2/5 模块
+下一个: api
+回复 OK 继续，或 /execute <module>
+```
+
+## Phase 5: Integration Verification
+
+**Trigger:** all modules completed, or `/integrate`
+
+### Step 1 — Per-module contract verification
+For each module, compare:
+- `contracts/<module>.md` → what was promised
+- `outputs/<module>/result.md` → what was delivered
+
+Output mismatch report:
+```
+集成验证报告
+════════════════════
+✅ database — 全部匹配
+✅ storage  — 全部匹配
+⚠️ auth    — register 签名多了可选参数 name
+✅ api      — 全部匹配
+
+结果: 4/5 通过，1 需修复 → /revise auth
+```
+
+### Step 2 — Upstream/downstream chain check
+Verify that downstream module imports match upstream module exports.
+
+### Step 3 — Finalize
+All pass → `plan.json` status → `done`.
+Partial failures → mark failed modules, prompt `/revise`.
+
+## /status — Check progress
+Read `plan.json`, display:
+- Task name + status
+- Per-module status (pending → in_progress → completed → failed)
+- Current wave / total waves
+- Suggested next action
+
+</process>
+
+<success_criteria>
+- Task decomposed into functional modules with clear dependency graph
+- All contracts defined with TypeScript signatures + behavior descriptions
+- prefix.md is byte-stable (no timestamps, no dynamic content, no module details)
+- Execution runs in waves via isolated subagents
+- Cache hits sustained across subagent sessions (prefix.md unchanged)
+- Integration verification passes all contracts
+- On failure: only broken module + downstream re-run
+</success_criteria>
